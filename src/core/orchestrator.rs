@@ -89,6 +89,25 @@ pub fn run_outdated(
     Ok(all_outdated)
 }
 
+/// Run the `why` command: detect providers, and ask them to explain a package's presence.
+pub fn run_why(registry: &ProviderRegistry, project_path: &Path, package_name: &str) -> Result<()> {
+    let detected = registry.detect_providers(project_path);
+
+    if detected.is_empty() {
+        anyhow::bail!(
+            "No supported project files found in '{}'.",
+            project_path.display()
+        );
+    }
+
+    for (provider, _) in &detected {
+        // Ask the provider to execute 'why' logic.
+        provider.why(project_path, package_name)?;
+    }
+
+    Ok(())
+}
+
 /// Attempt to parse a version string as a semver::Version.
 fn parse_version(version: &str) -> Option<Version> {
     Version::parse(version).ok()

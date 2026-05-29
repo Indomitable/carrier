@@ -1,5 +1,6 @@
 pub mod parser;
 pub mod registry;
+pub mod why;
 
 use std::path::{Path, PathBuf};
 
@@ -52,5 +53,9 @@ impl Provider for CargoProvider {
         package_name: &str,
     ) -> Result<Option<String>> {
         registry::get_latest_stable_version(agent, package_name)
+    }
+
+    fn why(&self, project_path: &Path, package_name: &str) -> Result<()> {
+        why::run_why(project_path, package_name)
     }
 }

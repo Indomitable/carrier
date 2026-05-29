@@ -22,4 +22,12 @@ pub enum Commands {
         #[arg(short, long, default_value = ".")]
         path: PathBuf,
     },
+    /// Explain why a package is included in the project.
+    Why {
+        /// The package name to analyze.
+        package: String,
+        /// Path to the project directory (defaults to current directory).
+        #[arg(short, long, default_value = ".")]
+        path: PathBuf,
+    },
 }

@@ -19,7 +19,23 @@ fn main() -> Result<()> {
         Commands::Outdated { path } => {
             run_outdated(&path)?;
         }
+        Commands::Why { package, path } => {
+            run_why(&path, &package)?;
+        }
     }
+
+    Ok(())
+}
+
+fn run_why(path: &std::path::Path, package: &str) -> Result<()> {
+    let project_path = path
+        .canonicalize()
+        .with_context(|| format!("Path '{}' does not exist", path.display()))?;
+
+    let mut registry = ProviderRegistry::new();
+    providers::register_all_providers(&mut registry);
+
+    orchestrator::run_why(&registry, &project_path, package)?;
 
     Ok(())
 }

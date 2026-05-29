@@ -7,7 +7,7 @@ This document outlines the development guidelines, architecture, and coding stan
 ## 📖 Project Overview & Context
 
 - For general project setup, CLI options, usage guides, and the ecosystem roadmap, see the [README.md](./README.md).
-- **Core Goal**: Carrier is a planned universal package manager aiming to unify package operations under a single CLI interface, beginning with the `outdated` command.
+- **Core Goal**: Carrier is a planned universal package manager aiming to unify package operations under a single CLI interface, currently offering `outdated` and `why` commands.
 
 ---
 

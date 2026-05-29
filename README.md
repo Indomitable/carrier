@@ -2,7 +2,7 @@
 
 Carrier is planned as a **universal package manager** designed to unify package operations across multiple language ecosystems (NuGet, Go, Pip, npm, and Cargo) under a single, flexible interface.
 
-Rather than covering all possible package manager functionality at once, Carrier is built on a **micro-kernel architecture** that allows adding features and ecosystem providers incrementally. The project begins with a baseline boilerplate, introducing the **`outdated`** command with initial support for the **NuGet** ecosystem.
+Rather than covering all possible package manager functionality at once, Carrier is built on a **micro-kernel architecture** that allows adding features and ecosystem providers incrementally. The project begins with a baseline boilerplate, introducing the **`outdated`** and **`why`** commands with initial support for the **NuGet** and **Cargo** ecosystems.
 
 ---
 
@@ -11,14 +11,14 @@ Rather than covering all possible package manager functionality at once, Carrier
 The long-term goal of Carrier is to provide a single tool to manage packages across different ecosystems. 
 
 ### 1. Unified Command Interface
-While we start with `outdated`, Carrier is designed to eventually support core package manager actions (e.g., install, update, remove) across different project types.
+While we start with `outdated` and `why`, Carrier is designed to eventually support core package manager actions (e.g., install, update, remove) across different project types.
 
 ### 2. Micro-Kernel Architecture
 At its core, Carrier is a thin orchestrator (the kernel). All ecosystem-specific operations—such as detecting project configurations, parsing manifests/lock files, and talking to remote registries—are delegated to modular, pluggable **Providers**.
 
 ### 3. Smart Ecosystem Detection
 Carrier automatically identifies the project type in the targeted directory by looking for ecosystem-specific manifest and lock files:
-- **NuGet**: `.csproj`, `Directory.Packages.props` (Central Package Management)
+- **NuGet**: `.slnx` (Solution file), `Directory.Packages.props` (Central Package Management)
 - **npm**: `package.json`, `package-lock.json`
 - **Cargo**: `Cargo.toml`, `Cargo.lock`
 - **pip**: `requirements.txt`
@@ -40,11 +40,23 @@ The first command implemented in Carrier is `outdated`. When you run `carrier ou
 
 ---
 
+## 🕵️ The `why` Command
+
+The `why` command allows you to trace the dependency graph and discover exactly why a specific package is included in your project. When you run `carrier why <package_name>`, it builds a reverse dependency graph from your lock files or manifest files and prints all paths from root packages down to the target package.
+
+### Key Rules & Behaviors:
+- **Graph Traversal**: Traces backward from the target package, identifying any parent packages that depend on it.
+- **Lock File Resolution**: Leverages lock files like `Cargo.lock` or `obj/project.assets.json` to accurately resolve exact versions in use.
+- **Multiple Versions**: Gracefully handles scenarios where multiple versions of the same package are in use, tracing each version independently.
+- **Version Propagation**: Highlights the explicitly requested versions along the edges of the dependency graph (or falls back to the resolved version if omitted).
+
+---
+
 ## 🔷 Ecosystem Roadmap
 
 | Ecosystem | Manifest File(s) | Lock File(s) | Status |
 | :--- | :--- | :--- | :--- |
-| **NuGet** 🔷 | `.csproj`, `Directory.Packages.props` | *None* (Ignored) | **Supported** |
+| **NuGet** 🔷 | `.slnx`, `Directory.Packages.props` | `project.assets.json` | **Supported** |
 | **npm** 📗 | `package.json` | `package-lock.json` | *Planned* |
 | **Cargo** 🦀 | `Cargo.toml` | `Cargo.lock` | **Supported** |
 | **pip** 🐍 | `requirements.txt` | *TBD* | *Planned* |
@@ -111,6 +123,12 @@ To scan a specific path:
 ```bash
 ./target/release/carrier outdated --path /path/to/project
 ```
+
+4. Run the `why` command to trace a package dependency:
+   ```bash
+   # Trace a package by name
+   cargo run -- why windows-sys
+   ```
 
 ---
 

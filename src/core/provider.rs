@@ -31,6 +31,11 @@ pub trait Provider {
     /// Returns `Ok(None)` if the package was not found in the registry.
     fn get_latest_version(&self, agent: &ureq::Agent, package_name: &str)
         -> Result<Option<String>>;
+
+    /// Explain why a package is included in the project dependencies.
+    fn why(&self, _project_path: &Path, _package_name: &str) -> Result<()> {
+        Ok(()) // Default implementation does nothing
+    }
 }
 
 /// Registry that holds all available providers.

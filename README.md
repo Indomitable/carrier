@@ -1,6 +1,6 @@
 # 📦 Carrier — Universal Package Manager
 
-Carrier is planned as a **universal package manager** designed to unify package operations across multiple language ecosystems (NuGet, Go, Pip, npm, and Cargo) under a single, flexible interface. 
+Carrier is planned as a **universal package manager** designed to unify package operations across multiple language ecosystems (NuGet, Go, Pip, npm, and Cargo) under a single, flexible interface.
 
 Rather than covering all possible package manager functionality at once, Carrier is built on a **micro-kernel architecture** that allows adding features and ecosystem providers incrementally. The project begins with a baseline boilerplate, introducing the **`outdated`** command with initial support for the **NuGet** ecosystem.
 
@@ -46,7 +46,7 @@ The first command implemented in Carrier is `outdated`. When you run `carrier ou
 | :--- | :--- | :--- | :--- |
 | **NuGet** 🔷 | `.csproj`, `Directory.Packages.props` | *None* (Ignored) | **Supported** |
 | **npm** 📗 | `package.json` | `package-lock.json` | *Planned* |
-| **Cargo** 🦀 | `Cargo.toml` | `Cargo.lock` | *Planned* |
+| **Cargo** 🦀 | `Cargo.toml` | `Cargo.lock` | **Supported** |
 | **pip** 🐍 | `requirements.txt` | *TBD* | *Planned* |
 | **Go** 🐹 | `go.mod` | `go.sum` | *Planned* |
 
@@ -70,10 +70,14 @@ src/
 │   └── table.rs            # Simple list output formatting
 └── providers/
     ├── mod.rs              # Registration list for the kernel
-    └── nuget/              # NuGet provider module (CPM and csproj support)
+    ├── nuget/              # NuGet provider module (CPM and csproj support)
+    │   ├── mod.rs
+    │   ├── parser.rs       # Parsing XML elements (PackageReference / PackageVersion)
+    │   └── registry.rs     # Synchronous NuGet v3 API communication
+    └── cargo/              # Cargo provider module (Cargo.toml and Cargo.lock support)
         ├── mod.rs
-        ├── parser.rs       # Parsing XML elements (PackageReference / PackageVersion)
-        └── registry.rs     # Synchronous NuGet v3 API communication
+        ├── parser.rs       # Parsing TOML dependencies and lock entries
+        └── registry.rs     # Synchronous crates.io API communication
 ```
 
 ---

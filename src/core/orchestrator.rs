@@ -3,7 +3,7 @@ use std::path::Path;
 use anyhow::{Context, Result};
 use indicatif::{ProgressBar, ProgressStyle};
 use semver::Version;
-
+use ureq::config::Config;
 use super::models::OutdatedDependency;
 use super::provider::ProviderRegistry;
 
@@ -18,13 +18,14 @@ pub fn run_outdated(
     if detected.is_empty() {
         anyhow::bail!(
             "No supported project files found in '{}'.\n\
-             Supported files: *.csproj, Directory.Packages.props",
+             Supported files: *.csproj, Directory.Packages.props, Cargo.toml",
             project_path.display()
         );
     }
 
     // Create a shared ureq agent for connection keep-alive.
-    let agent = ureq::Agent::new_with_defaults();
+    let config = Config::builder().user_agent("carrier").build();
+    let agent = ureq::Agent::new_with_config(config);
 
     let mut all_outdated = Vec::new();
 
@@ -47,8 +48,7 @@ pub fn run_outdated(
         pb.set_style(
             ProgressStyle::with_template(
                 "  {spinner:.cyan} [{pos}/{len}] Checking {msg}..."
-            )
-            .unwrap()
+            )?
             .tick_chars("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"),
         );
 

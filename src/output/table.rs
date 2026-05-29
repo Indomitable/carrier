@@ -53,7 +53,11 @@ pub fn print_outdated_table(outdated: &[OutdatedDependency]) {
     println!(
         "  {} {total} outdated {} found.\n",
         "⚠".yellow(),
-        if total == 1 { "dependency" } else { "dependencies" }
+        if total == 1 {
+            "dependency"
+        } else {
+            "dependencies"
+        }
     );
 }
 
@@ -68,4 +72,3 @@ fn ecosystem_icon(ecosystem: &str) -> &'static str {
         _ => "📦",
     }
 }
-

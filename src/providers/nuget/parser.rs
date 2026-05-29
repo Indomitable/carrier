@@ -24,19 +24,20 @@ pub fn parse_nuget_manifests(
 ) -> Result<Vec<Dependency>> {
     let mut dependencies = Vec::new();
 
+    let has_cpm = manifest_files
+        .iter()
+        .any(|f| f.file_name().unwrap_or_default() == "Directory.Packages.props");
+
     for file_path in manifest_files {
         let content = std::fs::read_to_string(file_path)
             .with_context(|| format!("Failed to read '{}'", file_path.display()))?;
 
-        let file_name = file_path
-            .file_name()
-            .unwrap_or_default()
-            .to_string_lossy();
+        let file_name = file_path.file_name().unwrap_or_default().to_string_lossy();
 
         let refs = if file_name == "Directory.Packages.props" {
             parse_package_versions(&content)?
         } else {
-            parse_package_references(&content)?
+            parse_package_references(&content, has_cpm, file_path)?
         };
 
         for pkg_ref in refs {
@@ -62,18 +63,27 @@ pub fn parse_nuget_manifests(
 }
 
 /// Parse `<PackageReference Include="..." Version="..." />` from a .csproj file.
-fn parse_package_references(xml_content: &str) -> Result<Vec<PackageRef>> {
-    parse_xml_elements(xml_content, "PackageReference")
+fn parse_package_references(
+    xml_content: &str,
+    has_cpm: bool,
+    file_path: &Path,
+) -> Result<Vec<PackageRef>> {
+    parse_xml_elements(xml_content, "PackageReference", has_cpm, Some(file_path))
 }
 
 /// Parse `<PackageVersion Include="..." Version="..." />` from Directory.Packages.props.
 fn parse_package_versions(xml_content: &str) -> Result<Vec<PackageRef>> {
-    parse_xml_elements(xml_content, "PackageVersion")
+    parse_xml_elements(xml_content, "PackageVersion", true, None)
 }
 
 /// Generic XML element parser that extracts Include and Version attributes
 /// from the specified element name.
-fn parse_xml_elements(xml_content: &str, element_name: &str) -> Result<Vec<PackageRef>> {
+fn parse_xml_elements(
+    xml_content: &str,
+    element_name: &str,
+    has_cpm: bool,
+    file_path: Option<&Path>,
+) -> Result<Vec<PackageRef>> {
     let mut reader = Reader::from_str(xml_content);
     let mut refs = Vec::new();
 
@@ -81,16 +91,14 @@ fn parse_xml_elements(xml_content: &str, element_name: &str) -> Result<Vec<Packa
         match reader.read_event() {
             Ok(Event::Empty(ref e)) | Ok(Event::Start(ref e)) => {
                 let local_name_raw = e.local_name();
-                let local_name = std::str::from_utf8(local_name_raw.as_ref())
-                    .unwrap_or_default();
+                let local_name = std::str::from_utf8(local_name_raw.as_ref()).unwrap_or_default();
 
                 if local_name.eq_ignore_ascii_case(element_name) {
                     let mut include = None;
                     let mut version = None;
 
                     for attr in e.attributes().flatten() {
-                        let key = std::str::from_utf8(attr.key.as_ref())
-                            .unwrap_or_default();
+                        let key = std::str::from_utf8(attr.key.as_ref()).unwrap_or_default();
                         let val = std::str::from_utf8(&attr.value)
                             .unwrap_or_default()
                             .to_string();
@@ -104,19 +112,37 @@ fn parse_xml_elements(xml_content: &str, element_name: &str) -> Result<Vec<Packa
 
                     // Only include if both name and version are present.
                     // In CPM, .csproj PackageReference may omit Version.
-                    if let (Some(name), Some(ver)) = (include, version) {
-                        if !ver.is_empty() {
-                            refs.push(PackageRef {
-                                name,
-                                version: ver,
-                            });
+                    if let Some(name) = include {
+                        if let Some(ver) = version {
+                            if !ver.is_empty() {
+                                refs.push(PackageRef { name, version: ver });
+                            } else if !has_cpm {
+                                if let Some(path) = file_path {
+                                    anyhow::bail!("Project {} has {} for '{}' without a version, and no Directory.Packages.props was found.", path.display(), element_name, name);
+                                } else {
+                                    anyhow::bail!(
+                                        "{} for '{}' without a version.",
+                                        element_name,
+                                        name
+                                    );
+                                }
+                            }
+                        } else if !has_cpm {
+                            if let Some(path) = file_path {
+                                anyhow::bail!("Project {} has {} for '{}' without a version, and no Directory.Packages.props was found.", path.display(), element_name, name);
+                            } else {
+                                anyhow::bail!("{} for '{}' without a version.", element_name, name);
+                            }
                         }
                     }
                 }
             }
             Ok(Event::Eof) => break,
             Err(e) => {
-                anyhow::bail!("XML parse error at position {}: {e}", reader.error_position());
+                anyhow::bail!(
+                    "XML parse error at position {}: {e}",
+                    reader.error_position()
+                );
             }
             _ => {}
         }
@@ -129,7 +155,8 @@ fn parse_xml_elements(xml_content: &str, element_name: &str) -> Result<Vec<Packa
 /// Directory.Packages.props and a .csproj, keep the one from Directory.Packages.props
 /// (which has the authoritative version in CPM scenarios).
 fn deduplicate_dependencies(deps: &mut Vec<Dependency>) {
-    let mut seen: std::collections::HashMap<String, (usize, bool)> = std::collections::HashMap::new();
+    let mut seen: std::collections::HashMap<String, (usize, bool)> =
+        std::collections::HashMap::new();
 
     for (i, dep) in deps.iter().enumerate() {
         let key = dep.name.to_lowercase();
@@ -153,8 +180,7 @@ fn deduplicate_dependencies(deps: &mut Vec<Dependency>) {
         }
     }
 
-    let keep_indices: std::collections::HashSet<usize> =
-        seen.values().map(|&(i, _)| i).collect();
+    let keep_indices: std::collections::HashSet<usize> = seen.values().map(|&(i, _)| i).collect();
 
     let mut i = 0;
     deps.retain(|_| {
@@ -182,7 +208,8 @@ mod tests {
   </ItemGroup>
 </Project>"#;
 
-        let refs = parse_package_references(xml).unwrap();
+        let path = Path::new("test.csproj");
+        let refs = parse_package_references(xml, false, path).unwrap();
         assert_eq!(refs.len(), 3);
         assert_eq!(refs[0].name, "Newtonsoft.Json");
         assert_eq!(refs[0].version, "13.0.3");
@@ -222,7 +249,8 @@ mod tests {
   </ItemGroup>
 </Project>"#;
 
-        let refs = parse_package_references(xml).unwrap();
+        let path = Path::new("test.csproj");
+        let refs = parse_package_references(xml, true, path).unwrap();
         assert_eq!(refs.len(), 1);
         assert_eq!(refs[0].name, "Serilog");
     }

@@ -1,11 +1,11 @@
 use std::path::Path;
 
+use super::models::OutdatedDependency;
+use super::provider::ProviderRegistry;
 use anyhow::{Context, Result};
 use indicatif::{ProgressBar, ProgressStyle};
 use semver::Version;
 use ureq::config::Config;
-use super::models::OutdatedDependency;
-use super::provider::ProviderRegistry;
 
 /// Run the `outdated` command: detect providers, parse dependencies,
 /// query registries, and return the list of outdated dependencies.
@@ -32,12 +32,7 @@ pub fn run_outdated(
     for (provider, manifest_files) in &detected {
         let dependencies = provider
             .parse_dependencies(project_path, manifest_files)
-            .with_context(|| {
-                format!(
-                    "Failed to parse {} dependencies",
-                    provider.name()
-                )
-            })?;
+            .with_context(|| format!("Failed to parse {} dependencies", provider.name()))?;
 
         if dependencies.is_empty() {
             continue;
@@ -46,10 +41,8 @@ pub fn run_outdated(
         // Set up a progress spinner.
         let pb = ProgressBar::new(dependencies.len() as u64);
         pb.set_style(
-            ProgressStyle::with_template(
-                "  {spinner:.cyan} [{pos}/{len}] Checking {msg}..."
-            )?
-            .tick_chars("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"),
+            ProgressStyle::with_template("  {spinner:.cyan} [{pos}/{len}] Checking {msg}...")?
+                .tick_chars("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"),
         );
 
         for dep in &dependencies {
@@ -57,9 +50,7 @@ pub fn run_outdated(
 
             let latest = provider
                 .get_latest_version(&agent, &dep.name)
-                .with_context(|| {
-                    format!("Failed to check latest version for '{}'", dep.name)
-                })?;
+                .with_context(|| format!("Failed to check latest version for '{}'", dep.name))?;
 
             if let Some(latest_version) = latest {
                 // Determine the "current" version for comparison.

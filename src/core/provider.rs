@@ -29,11 +29,8 @@ pub trait Provider {
 
     /// Query the package registry for the latest stable version of a single package.
     /// Returns `Ok(None)` if the package was not found in the registry.
-    fn get_latest_version(
-        &self,
-        agent: &ureq::Agent,
-        package_name: &str,
-    ) -> Result<Option<String>>;
+    fn get_latest_version(&self, agent: &ureq::Agent, package_name: &str)
+        -> Result<Option<String>>;
 }
 
 /// Registry that holds all available providers.

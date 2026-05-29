@@ -28,12 +28,9 @@ pub fn get_latest_stable_version(
 
     match response {
         Ok(resp) => {
-            let body: VersionsResponse = resp
-                .into_body()
-                .read_json()
-                .with_context(|| {
-                    format!("Failed to parse NuGet API response for '{package_name}'")
-                })?;
+            let body: VersionsResponse = resp.into_body().read_json().with_context(|| {
+                format!("Failed to parse NuGet API response for '{package_name}'")
+            })?;
 
             // Filter out pre-release versions (those containing '-')
             // and find the highest stable version.
@@ -41,9 +38,7 @@ pub fn get_latest_stable_version(
                 .versions
                 .iter()
                 .filter(|v| !v.contains('-'))
-                .filter_map(|v| {
-                    semver::Version::parse(v).ok().map(|parsed| (v, parsed))
-                })
+                .filter_map(|v| semver::Version::parse(v).ok().map(|parsed| (v, parsed)))
                 .max_by(|(_, a), (_, b)| a.cmp(b))
                 .map(|(original, _)| original.clone());
 
@@ -53,13 +48,11 @@ pub fn get_latest_stable_version(
             // Package not found on nuget.org
             Ok(None)
         }
-        Err(e) => {
-            Err(anyhow::anyhow!(
-                "HTTP request failed for package '{}': {}",
-                package_name,
-                e
-            ))
-        }
+        Err(e) => Err(anyhow::anyhow!(
+            "HTTP request failed for package '{}': {}",
+            package_name,
+            e
+        )),
     }
 }
 
@@ -80,11 +73,7 @@ mod tests {
         let latest = versions
             .iter()
             .filter(|v| !v.contains('-'))
-            .filter_map(|v| {
-                semver::Version::parse(v)
-                    .ok()
-                    .map(|parsed| (v, parsed))
-            })
+            .filter_map(|v| semver::Version::parse(v).ok().map(|parsed| (v, parsed)))
             .max_by(|(_, a), (_, b)| a.cmp(b))
             .map(|(original, _)| original.clone());
 

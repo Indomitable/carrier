@@ -1,7 +1,7 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use super::models::OutdatedDependency;
-use super::provider::ProviderRegistry;
+use super::provider::Provider;
 use anyhow::{Context, Result};
 use indicatif::{ProgressBar, ProgressStyle};
 use semver::Version;
@@ -10,26 +10,16 @@ use ureq::config::Config;
 /// Run the `outdated` command: detect providers, parse dependencies,
 /// query registries, and return the list of outdated dependencies.
 pub fn run_outdated(
-    registry: &ProviderRegistry,
+    providers: Vec<(&dyn Provider, Vec<PathBuf>)>,
     project_path: &Path,
 ) -> Result<Vec<OutdatedDependency>> {
-    let detected = registry.detect_providers(project_path);
-
-    if detected.is_empty() {
-        anyhow::bail!(
-            "No supported project files found in '{}'.\n\
-             Supported files: *.csproj, Directory.Packages.props, Cargo.toml",
-            project_path.display()
-        );
-    }
-
     // Create a shared ureq agent for connection keep-alive.
     let config = Config::builder().user_agent("carrier").build();
     let agent = ureq::Agent::new_with_config(config);
 
     let mut all_outdated = Vec::new();
 
-    for (provider, manifest_files) in &detected {
+    for (provider, manifest_files) in &providers {
         let dependencies = provider
             .parse_dependencies(project_path, manifest_files)
             .with_context(|| format!("Failed to parse {} dependencies", provider.name()))?;
@@ -90,17 +80,8 @@ pub fn run_outdated(
 }
 
 /// Run the `why` command: detect providers, and ask them to explain a package's presence.
-pub fn run_why(registry: &ProviderRegistry, project_path: &Path, package_name: &str) -> Result<()> {
-    let detected = registry.detect_providers(project_path);
-
-    if detected.is_empty() {
-        anyhow::bail!(
-            "No supported project files found in '{}'.",
-            project_path.display()
-        );
-    }
-
-    for (provider, _) in &detected {
+pub fn run_why(providers: Vec<(&dyn Provider, Vec<PathBuf>)>, project_path: &Path, package_name: &str) -> Result<()> {
+    for (provider, _) in &providers {
         // Ask the provider to execute 'why' logic.
         provider.why(project_path, package_name)?;
     }

@@ -5,12 +5,13 @@ mod providers;
 
 use std::process;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use clap::Parser;
 
 use cli::{Cli, Commands};
 use core::orchestrator;
-use core::provider::ProviderRegistry;
+use crate::core::init_provider;
+use crate::core::provider::ProviderRegistry;
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
@@ -28,30 +29,20 @@ fn main() -> Result<()> {
 }
 
 fn run_why(path: &std::path::Path, package: &str) -> Result<()> {
-    let project_path = path
-        .canonicalize()
-        .with_context(|| format!("Path '{}' does not exist", path.display()))?;
-
     let mut registry = ProviderRegistry::new();
-    providers::register_all_providers(&mut registry);
+    let (project_path, providers) = init_provider(path, &mut registry)?;
 
-    orchestrator::run_why(&registry, &project_path, package)?;
+    orchestrator::run_why(providers, &project_path, package)?;
 
     Ok(())
 }
 
 fn run_outdated(path: &std::path::Path) -> Result<()> {
-    // Resolve to absolute path.
-    let project_path = path
-        .canonicalize()
-        .with_context(|| format!("Path '{}' does not exist", path.display()))?;
-
-    // Build the provider registry with all available providers.
     let mut registry = ProviderRegistry::new();
-    providers::register_all_providers(&mut registry);
+    let (project_path, providers) = init_provider(path, &mut registry)?;
 
     // Run the outdated check.
-    let outdated = orchestrator::run_outdated(&registry, &project_path)?;
+    let outdated = orchestrator::run_outdated(providers, &project_path)?;
 
     // Display results.
     output::table::print_outdated_table(&outdated);

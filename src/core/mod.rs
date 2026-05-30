@@ -1,7 +1,7 @@
-use std::path::{Path, PathBuf};
-use anyhow::{Context, Result};
 use crate::core::provider::{Provider, ProviderRegistry};
 use crate::providers;
+use anyhow::{Context, Result};
+use std::path::{Path, PathBuf};
 
 pub mod models;
 pub mod orchestrator;
@@ -10,7 +10,7 @@ pub mod provider;
 pub fn init_provider<'a>(
     path: &Path,
     registry: &'a mut ProviderRegistry,
-) -> Result<(PathBuf, Vec<(&'a dyn Provider, Vec<PathBuf>)>)> {
+) -> Result<(PathBuf, Vec<&'a dyn Provider>)> {
     // Resolve to absolute path.
     let project_path = path
         .canonicalize()

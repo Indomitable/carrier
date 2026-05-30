@@ -4,12 +4,12 @@ use std::path::Path;
 use anyhow::{Context, Result};
 use toml::Value;
 
-use crate::core::models::{DependencyGraph, DependencyNode, Project};
+use crate::core::models::{DependencyGraph, DependencyNode};
 
-pub fn get_projects(project_path: &Path) -> Result<Vec<Project>> {
+pub fn build_dependency_graph(project_path: &Path) -> Result<DependencyGraph> {
     let lock_path = project_path.join("Cargo.lock");
     if !lock_path.exists() {
-        return Ok(Vec::new());
+        return Ok(DependencyGraph { nodes: Vec::new() });
     }
 
     let content = fs::read_to_string(&lock_path)
@@ -20,7 +20,7 @@ pub fn get_projects(project_path: &Path) -> Result<Vec<Project>> {
 
     let packages = lock.get("package").and_then(|p| p.as_array());
     if packages.is_none() {
-        return Ok(Vec::new());
+        return Ok(DependencyGraph { nodes: Vec::new() });
     }
 
     let mut nodes = Vec::new();
@@ -67,16 +67,5 @@ pub fn get_projects(project_path: &Path) -> Result<Vec<Project>> {
         });
     }
 
-    // Try to determine a project name
-    let project_name = project_path
-        .file_name()
-        .map(|s| s.to_string_lossy().to_string())
-        .unwrap_or_else(|| "Cargo Workspace".to_string());
-
-    let project = Project {
-        name: project_name,
-        graph: DependencyGraph { nodes },
-    };
-
-    Ok(vec![project])
+    Ok(DependencyGraph { nodes })
 }

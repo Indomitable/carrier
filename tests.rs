@@ -34,9 +34,9 @@ dependencies = [
         let projects = get_projects(dir.path()).unwrap();
         assert_eq!(projects.len(), 1);
         let proj = &projects[0];
-        assert_eq!(proj.graph.nodes.len(), 3);
+        assert_eq!(proj.dependencies_graph.nodes.len(), 3);
         
-        let my_app_node = proj.graph.nodes.iter().find(|n| n.name == "my_app").unwrap();
+        let my_app_node = proj.dependencies_graph.nodes.iter().find(|n| n.name == "my_app").unwrap();
         assert_eq!(my_app_node.dependencies.len(), 1);
         assert_eq!(my_app_node.dependencies[0].0, "serde");
     }

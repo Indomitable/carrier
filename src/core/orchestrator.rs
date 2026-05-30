@@ -1,4 +1,4 @@
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use super::models::OutdatedDependency;
 use super::provider::Provider;
@@ -10,7 +10,7 @@ use ureq::config::Config;
 /// Run the `outdated` command: detect providers, parse dependencies,
 /// query registries, and return the list of outdated dependencies.
 pub fn run_outdated(
-    providers: Vec<(&dyn Provider, Vec<PathBuf>)>,
+    providers: Vec<&dyn Provider>,
     project_path: &Path,
 ) -> Result<Vec<OutdatedDependency>> {
     // Create a shared ureq agent for connection keep-alive.
@@ -19,10 +19,14 @@ pub fn run_outdated(
 
     let mut all_outdated = Vec::new();
 
-    for (provider, manifest_files) in &providers {
-        let dependencies = provider
-            .parse_dependencies(project_path, manifest_files)
-            .with_context(|| format!("Failed to parse {} dependencies", provider.name()))?;
+    for provider in providers {
+        let projects = provider
+            .get_projects(project_path)
+            .with_context(|| format!("Failed to get {} projects", provider.name()))?;
+        let dependencies: Vec<_> = projects
+            .iter()
+            .flat_map(|project| project.direct_dependencies.iter())
+            .collect();
 
         if dependencies.is_empty() {
             continue;
@@ -80,16 +84,25 @@ pub fn run_outdated(
 }
 
 /// Run the `why` command: detect providers, ask them for projects, and traverse their graphs to find the package.
-pub fn run_why(providers: Vec<(&dyn Provider, Vec<PathBuf>)>, project_path: &Path, package_name: &str) -> Result<()> {
-    for (provider, _) in &providers {
+pub fn run_why(
+    providers: Vec<&dyn Provider>,
+    project_path: &Path,
+    package_name: &str,
+) -> Result<()> {
+    for provider in &providers {
         let projects = provider.get_projects(project_path)?;
 
         for project in projects {
-            let mut name_to_ids: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
-            let mut reverse_graph: std::collections::HashMap<String, Vec<(String, Option<String>)>> = std::collections::HashMap::new();
-            let mut id_to_node: std::collections::HashMap<String, &super::models::DependencyNode> = std::collections::HashMap::new();
+            let mut name_to_ids: std::collections::HashMap<String, Vec<String>> =
+                std::collections::HashMap::new();
+            let mut reverse_graph: std::collections::HashMap<
+                String,
+                Vec<(String, Option<String>)>,
+            > = std::collections::HashMap::new();
+            let mut id_to_node: std::collections::HashMap<String, &super::models::DependencyNode> =
+                std::collections::HashMap::new();
 
-            for node in &project.graph.nodes {
+            for node in &project.dependencies_graph.nodes {
                 name_to_ids
                     .entry(node.name.clone())
                     .or_default()
@@ -97,7 +110,7 @@ pub fn run_why(providers: Vec<(&dyn Provider, Vec<PathBuf>)>, project_path: &Pat
                 id_to_node.insert(node.id.clone(), node);
             }
 
-            for node in &project.graph.nodes {
+            for node in &project.dependencies_graph.nodes {
                 for (dep_name, dep_ver) in &node.dependencies {
                     let target_ids = if let Some(ids) = name_to_ids.get(dep_name) {
                         ids.clone()
@@ -110,7 +123,11 @@ pub fn run_why(providers: Vec<(&dyn Provider, Vec<PathBuf>)>, project_path: &Pat
                                 break;
                             }
                         }
-                        if let Some(m) = matched { m } else { continue; }
+                        if let Some(m) = matched {
+                            m
+                        } else {
+                            continue;
+                        }
                     };
 
                     // For simplicity, add reverse edges to all matching target IDs
@@ -124,7 +141,9 @@ pub fn run_why(providers: Vec<(&dyn Provider, Vec<PathBuf>)>, project_path: &Pat
             }
 
             // Find all target nodes matching package_name
-            let target_nodes: Vec<&super::models::DependencyNode> = project.graph.nodes
+            let target_nodes: Vec<&super::models::DependencyNode> = project
+                .dependencies_graph
+                .nodes
                 .iter()
                 .filter(|n| n.name.eq_ignore_ascii_case(package_name))
                 .collect();
@@ -142,7 +161,10 @@ pub fn run_why(providers: Vec<(&dyn Provider, Vec<PathBuf>)>, project_path: &Pat
 
                 fn dfs(
                     current_id: &str,
-                    reverse_graph: &std::collections::HashMap<String, Vec<(String, Option<String>)>>,
+                    reverse_graph: &std::collections::HashMap<
+                        String,
+                        Vec<(String, Option<String>)>,
+                    >,
                     id_to_node: &std::collections::HashMap<String, &super::models::DependencyNode>,
                     current_sequence: &mut std::collections::VecDeque<String>,
                     paths: &mut Vec<Vec<String>>,
@@ -158,7 +180,8 @@ pub fn run_why(providers: Vec<(&dyn Provider, Vec<PathBuf>)>, project_path: &Pat
                     if let Some(parents) = reverse_graph.get(current_id) {
                         if parents.is_empty() {
                             // Root
-                            current_sequence.push_front(format!("{} ({})", node.name, node.version));
+                            current_sequence
+                                .push_front(format!("{} ({})", node.name, node.version));
                             paths.push(current_sequence.iter().cloned().collect());
                             current_sequence.pop_front();
                         } else {

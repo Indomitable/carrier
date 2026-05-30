@@ -8,10 +8,10 @@ use std::process;
 use anyhow::Result;
 use clap::Parser;
 
-use cli::{Cli, Commands};
-use core::orchestrator;
 use crate::core::init_provider;
 use crate::core::provider::ProviderRegistry;
+use cli::{Cli, Commands};
+use core::orchestrator;
 
 fn main() -> Result<()> {
     let cli = Cli::parse();

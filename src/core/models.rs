@@ -85,9 +85,14 @@ pub struct DependencyGraph {
     pub nodes: Vec<DependencyNode>,
 }
 
-/// A discovered project containing a dependency graph.
+/// A discovered project containing direct dependencies and a resolved dependency graph.
 #[derive(Debug, Clone)]
 pub struct Project {
     pub name: String,
-    pub graph: DependencyGraph,
+    /// Manifest file declaring the project's direct dependencies.
+    pub manifest_file: PathBuf,
+    /// Direct dependencies declared by the project manifest.
+    pub direct_dependencies: Vec<Dependency>,
+    /// Resolved dependencies from the lock file or equivalent restore output.
+    pub dependencies_graph: DependencyGraph,
 }

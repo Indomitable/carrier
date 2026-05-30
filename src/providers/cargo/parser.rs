@@ -16,7 +16,7 @@ struct CargoDependency {
 ///
 /// Cargo.lock is optional. When present, it supplies the resolved version for
 /// direct dependencies; otherwise the declared Cargo.toml version is used.
-pub fn parse_cargo_manifests(
+pub(super) fn parse_cargo_manifests(
     project_path: &Path,
     manifest_files: &[PathBuf],
 ) -> Result<Vec<Dependency>> {

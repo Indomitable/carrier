@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 
-use super::models::{Dependency, Ecosystem};
+use super::models::{Dependency, Ecosystem, Project};
 
 /// Trait that every package ecosystem provider must implement.
 /// All methods are synchronous — no async runtime needed.
@@ -32,9 +32,9 @@ pub trait Provider {
     fn get_latest_version(&self, agent: &ureq::Agent, package_name: &str)
         -> Result<Option<String>>;
 
-    /// Explain why a package is included in the project dependencies.
-    fn why(&self, _project_path: &Path, _package_name: &str) -> Result<()> {
-        Ok(()) // Default implementation does nothing
+    /// Get a list of detected projects and their dependency graphs.
+    fn get_projects(&self, _project_path: &Path) -> Result<Vec<Project>> {
+        Ok(Vec::new())
     }
 }
 

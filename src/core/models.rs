@@ -65,3 +65,29 @@ pub struct OutdatedDependency {
     /// The file where this dependency was declared.
     pub source_file: PathBuf,
 }
+
+/// A node in a dependency graph.
+#[derive(Debug, Clone)]
+pub struct DependencyNode {
+    /// Unique identifier for this node within the graph (e.g., "name version").
+    pub id: String,
+    /// Package name.
+    pub name: String,
+    /// Resolved version.
+    pub version: String,
+    /// Dependencies of this node: (dependency_id, optional_requested_version).
+    pub dependencies: Vec<(String, Option<String>)>,
+}
+
+/// A dependency graph for a single project or target.
+#[derive(Debug, Clone)]
+pub struct DependencyGraph {
+    pub nodes: Vec<DependencyNode>,
+}
+
+/// A discovered project containing a dependency graph.
+#[derive(Debug, Clone)]
+pub struct Project {
+    pub name: String,
+    pub graph: DependencyGraph,
+}

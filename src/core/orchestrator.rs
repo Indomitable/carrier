@@ -79,11 +79,154 @@ pub fn run_outdated(
     Ok(all_outdated)
 }
 
-/// Run the `why` command: detect providers, and ask them to explain a package's presence.
+/// Run the `why` command: detect providers, ask them for projects, and traverse their graphs to find the package.
 pub fn run_why(providers: Vec<(&dyn Provider, Vec<PathBuf>)>, project_path: &Path, package_name: &str) -> Result<()> {
     for (provider, _) in &providers {
-        // Ask the provider to execute 'why' logic.
-        provider.why(project_path, package_name)?;
+        let projects = provider.get_projects(project_path)?;
+
+        for project in projects {
+            let mut name_to_ids: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
+            let mut reverse_graph: std::collections::HashMap<String, Vec<(String, Option<String>)>> = std::collections::HashMap::new();
+            let mut id_to_node: std::collections::HashMap<String, &super::models::DependencyNode> = std::collections::HashMap::new();
+
+            for node in &project.graph.nodes {
+                name_to_ids
+                    .entry(node.name.clone())
+                    .or_default()
+                    .push(node.id.clone());
+                id_to_node.insert(node.id.clone(), node);
+            }
+
+            for node in &project.graph.nodes {
+                for (dep_name, dep_ver) in &node.dependencies {
+                    let target_ids = if let Some(ids) = name_to_ids.get(dep_name) {
+                        ids.clone()
+                    } else {
+                        // Could be a missing dependency, or a mismatch in casing. Try case-insensitive.
+                        let mut matched = None;
+                        for k in name_to_ids.keys() {
+                            if k.eq_ignore_ascii_case(dep_name) {
+                                matched = Some(name_to_ids.get(k).unwrap().clone());
+                                break;
+                            }
+                        }
+                        if let Some(m) = matched { m } else { continue; }
+                    };
+
+                    // For simplicity, add reverse edges to all matching target IDs
+                    for target_id in target_ids {
+                        reverse_graph
+                            .entry(target_id)
+                            .or_default()
+                            .push((node.id.clone(), dep_ver.clone()));
+                    }
+                }
+            }
+
+            // Find all target nodes matching package_name
+            let target_nodes: Vec<&super::models::DependencyNode> = project.graph.nodes
+                .iter()
+                .filter(|n| n.name.eq_ignore_ascii_case(package_name))
+                .collect();
+
+            if target_nodes.is_empty() {
+                continue;
+            }
+
+            println!("Project: {}", project.name);
+
+            for target in target_nodes {
+                println!("{}: {}", target.name, target.version);
+
+                let mut paths = Vec::new();
+
+                fn dfs(
+                    current_id: &str,
+                    reverse_graph: &std::collections::HashMap<String, Vec<(String, Option<String>)>>,
+                    id_to_node: &std::collections::HashMap<String, &super::models::DependencyNode>,
+                    current_sequence: &mut std::collections::VecDeque<String>,
+                    paths: &mut Vec<Vec<String>>,
+                    visited: &mut std::collections::HashSet<String>,
+                ) {
+                    if visited.contains(current_id) {
+                        return;
+                    }
+                    visited.insert(current_id.to_string());
+
+                    let node = id_to_node.get(current_id).unwrap();
+
+                    if let Some(parents) = reverse_graph.get(current_id) {
+                        if parents.is_empty() {
+                            // Root
+                            current_sequence.push_front(format!("{} ({})", node.name, node.version));
+                            paths.push(current_sequence.iter().cloned().collect());
+                            current_sequence.pop_front();
+                        } else {
+                            for (parent_id, req_ver_opt) in parents {
+                                let edge_str = if let Some(req_ver) = req_ver_opt {
+                                    format!("{} ({})", node.name, req_ver)
+                                } else {
+                                    format!("{} ({})", node.name, node.version)
+                                };
+                                current_sequence.push_front(edge_str);
+                                dfs(
+                                    parent_id,
+                                    reverse_graph,
+                                    id_to_node,
+                                    current_sequence,
+                                    paths,
+                                    visited,
+                                );
+                                current_sequence.pop_front();
+                            }
+                        }
+                    } else {
+                        // Root
+                        current_sequence.push_front(format!("{} ({})", node.name, node.version));
+                        paths.push(current_sequence.iter().cloned().collect());
+                        current_sequence.pop_front();
+                    }
+
+                    visited.remove(current_id);
+                }
+
+                let mut visited = std::collections::HashSet::new();
+
+                if let Some(parents) = reverse_graph.get(&target.id) {
+                    if parents.is_empty() {
+                        paths.push(vec![format!("{} ({})", target.name, target.version)]);
+                    } else {
+                        for (parent_id, req_ver_opt) in parents {
+                            let mut seq = std::collections::VecDeque::new();
+                            let edge_str = if let Some(req_ver) = req_ver_opt {
+                                format!("{} ({})", target.name, req_ver)
+                            } else {
+                                format!("{} ({})", target.name, target.version)
+                            };
+                            seq.push_front(edge_str);
+                            dfs(
+                                parent_id,
+                                &reverse_graph,
+                                &id_to_node,
+                                &mut seq,
+                                &mut paths,
+                                &mut visited,
+                            );
+                        }
+                    }
+                } else {
+                    paths.push(vec![format!("{} ({})", target.name, target.version)]);
+                }
+
+                // Sort paths for stable output
+                paths.sort();
+
+                for path in paths {
+                    println!("{}", path.join(" -> "));
+                }
+                println!();
+            }
+        }
     }
 
     Ok(())

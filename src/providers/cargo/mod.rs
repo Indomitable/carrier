@@ -1,12 +1,12 @@
 pub mod parser;
 pub mod registry;
-pub mod why;
+pub mod graph;
 
 use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 
-use crate::core::models::{Dependency, Ecosystem};
+use crate::core::models::{Dependency, Ecosystem, Project};
 use crate::core::provider::Provider;
 
 /// Cargo package provider.
@@ -55,7 +55,7 @@ impl Provider for CargoProvider {
         registry::get_latest_stable_version(agent, package_name)
     }
 
-    fn why(&self, project_path: &Path, package_name: &str) -> Result<()> {
-        why::run_why(project_path, package_name)
+    fn get_projects(&self, project_path: &Path) -> Result<Vec<Project>> {
+        graph::get_projects(project_path)
     }
 }

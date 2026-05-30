@@ -6,7 +6,7 @@ use super::models::{Ecosystem, Project};
 
 /// Trait that every package ecosystem provider must implement.
 /// All methods are synchronous — no async runtime needed.
-pub trait Provider {
+pub trait Provider: Send + Sync {
     /// Human-readable name (e.g., "NuGet", "npm").
     fn name(&self) -> &str;
 
@@ -18,8 +18,13 @@ pub trait Provider {
 
     /// Query the package registry for the latest stable version of a single package.
     /// Returns `Ok(None)` if the package was not found in the registry.
-    fn get_latest_version(&self, agent: &ureq::Agent, package_name: &str)
-        -> Result<Option<String>>;
+    fn get_latest_version(&self, package_name: &str) -> Result<Option<String>>;
+
+    /// Determine if a dependency is outdated based on ecosystem semantics.
+    /// `declared` is the version requirement from the manifest.
+    /// `resolved` is the exact version from the lock file (if available).
+    /// `latest` is the latest stable version from the registry.
+    fn is_outdated(&self, declared: &str, resolved: Option<&str>, latest: &str) -> bool;
 
     /// Get a list of detected projects and their dependency graphs.
     fn get_projects(&self, _project_path: &Path) -> Result<Vec<Project>> {

@@ -32,7 +32,9 @@ fn run_why(path: &std::path::Path, package: &str) -> Result<()> {
     let mut registry = ProviderRegistry::new();
     let (project_path, providers) = init_provider(path, &mut registry)?;
 
-    orchestrator::run_why(providers, &project_path, package)?;
+    let results = orchestrator::run_why(providers, &project_path, package)?;
+
+    crate::output::why::print_why_results(&results);
 
     Ok(())
 }

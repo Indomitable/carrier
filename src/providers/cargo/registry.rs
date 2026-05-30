@@ -22,22 +22,35 @@ pub fn get_latest_stable_version(
     package_name: &str,
 ) -> Result<Option<String>> {
     let url = format!("{CRATES_IO_BASE}/{package_name}");
-    let response = agent.get(&url).call();
+    
+    let mut attempts = 0;
+    let max_attempts = 3;
 
-    match response {
-        Ok(resp) => {
-            let body: CrateResponse = resp.into_body().read_json().with_context(|| {
-                format!("Failed to parse crates.io API response for '{package_name}'")
-            })?;
+    loop {
+        attempts += 1;
+        let response = agent.get(&url).call();
 
-            Ok(body.krate.max_stable_version)
+        match response {
+            Ok(resp) => {
+                let body: CrateResponse = resp.into_body().read_json().with_context(|| {
+                    format!("Failed to parse crates.io API response for '{package_name}'")
+                })?;
+
+                return Ok(body.krate.max_stable_version);
+            }
+            Err(ureq::Error::StatusCode(404)) => return Ok(None),
+            Err(e) => {
+                if attempts >= max_attempts {
+                    return Err(anyhow::anyhow!(
+                        "HTTP request failed for crate '{}' after {} attempts: {}",
+                        package_name,
+                        attempts,
+                        e
+                    ));
+                }
+                std::thread::sleep(std::time::Duration::from_millis(500));
+            }
         }
-        Err(ureq::Error::StatusCode(404)) => Ok(None),
-        Err(e) => Err(anyhow::anyhow!(
-            "HTTP request failed for crate '{}': {}",
-            package_name,
-            e
-        )),
     }
 }
 

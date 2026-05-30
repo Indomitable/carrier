@@ -13,11 +13,19 @@ use crate::core::provider::Provider;
 ///
 /// Detects Cargo.toml files and optionally reads Cargo.lock for resolved versions.
 /// Queries the crates.io API for latest stable versions.
-pub struct CargoProvider;
+pub struct CargoProvider {
+    agent: ureq::Agent,
+}
 
 impl CargoProvider {
     pub fn new() -> Self {
-        Self
+        let config = ureq::config::Config::builder()
+            .user_agent("carrier")
+            .timeout_global(Some(std::time::Duration::from_secs(10)))
+            .build();
+        Self {
+            agent: ureq::Agent::new_with_config(config),
+        }
     }
 }
 
@@ -36,10 +44,28 @@ impl Provider for CargoProvider {
 
     fn get_latest_version(
         &self,
-        agent: &ureq::Agent,
         package_name: &str,
     ) -> Result<Option<String>> {
-        registry::get_latest_stable_version(agent, package_name)
+        registry::get_latest_stable_version(&self.agent, package_name)
+    }
+
+    fn is_outdated(&self, declared: &str, resolved: Option<&str>, latest: &str) -> bool {
+        let Ok(latest_ver) = semver::Version::parse(latest) else {
+            return false;
+        };
+
+        if let Some(res) = resolved {
+            if let Ok(res_ver) = semver::Version::parse(res) {
+                return latest_ver > res_ver;
+            }
+            return false;
+        }
+
+        if let Ok(req) = semver::VersionReq::parse(declared) {
+            return !req.matches(&latest_ver);
+        }
+
+        false
     }
 
     fn get_projects(&self, project_path: &Path) -> Result<Vec<Project>> {
@@ -108,5 +134,26 @@ serde = "1"
         assert!(projects[0].dependencies_graph.nodes.is_empty());
 
         fs::remove_dir_all(project_dir).unwrap();
+    }
+
+    #[test]
+    fn test_is_outdated() {
+        let provider = CargoProvider::new();
+
+        // With resolved version, latest controls the result.
+        assert!(!provider.is_outdated("2", Some("2.1.0"), "2.1.0"));
+        assert!(provider.is_outdated("2", Some("2.1.0"), "2.2.0"));
+        assert!(provider.is_outdated("^1.0.0", Some("1.0.0"), "1.0.5")); // Outdated because lockfile is old
+        assert!(provider.is_outdated("^1.0.0", Some("1.0.0"), "2.0.0")); // Outdated because lockfile is old
+        assert!(!provider.is_outdated("^1.0.0", Some("1.0.5"), "1.0.5")); // Not outdated, lockfile is current
+
+        // Without resolved version, manifest requirement controls the result.
+        assert!(!provider.is_outdated("2", None, "2.9.9"));
+        assert!(provider.is_outdated("2", None, "3.0.0"));
+        assert!(!provider.is_outdated("~2.0", None, "2.0.9"));
+        assert!(provider.is_outdated("~2.0", None, "2.1.0"));
+        assert!(!provider.is_outdated("^1.0.0", None, "1.0.5")); // Not outdated, manifest allows latest
+        assert!(provider.is_outdated("^1.0.0", None, "2.0.0")); // Outdated, manifest strictly excludes latest
+        assert!(!provider.is_outdated(">= 1.0.0", None, "2.0.0")); // Not outdated, manifest allows latest
     }
 }

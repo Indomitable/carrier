@@ -24,35 +24,47 @@ pub fn get_latest_stable_version(
         package_name.to_lowercase()
     );
 
-    let response = agent.get(&url).call();
+    let mut attempts = 0;
+    let max_attempts = 3;
 
-    match response {
-        Ok(resp) => {
-            let body: VersionsResponse = resp.into_body().read_json().with_context(|| {
-                format!("Failed to parse NuGet API response for '{package_name}'")
-            })?;
+    loop {
+        attempts += 1;
+        let response = agent.get(&url).call();
 
-            // Filter out pre-release versions (those containing '-')
-            // and find the highest stable version.
-            let latest = body
-                .versions
-                .iter()
-                .filter(|v| !v.contains('-'))
-                .filter_map(|v| semver::Version::parse(v).ok().map(|parsed| (v, parsed)))
-                .max_by(|(_, a), (_, b)| a.cmp(b))
-                .map(|(original, _)| original.clone());
+        match response {
+            Ok(resp) => {
+                let body: VersionsResponse = resp.into_body().read_json().with_context(|| {
+                    format!("Failed to parse NuGet API response for '{package_name}'")
+                })?;
 
-            Ok(latest)
+                // Filter out pre-release versions (those containing '-')
+                // and find the highest stable version.
+                let latest = body
+                    .versions
+                    .iter()
+                    .filter(|v| !v.contains('-'))
+                    .filter_map(|v| semver::Version::parse(v).ok().map(|parsed| (v, parsed)))
+                    .max_by(|(_, a), (_, b)| a.cmp(b))
+                    .map(|(original, _)| original.clone());
+
+                return Ok(latest);
+            }
+            Err(ureq::Error::StatusCode(404)) => {
+                // Package not found on nuget.org
+                return Ok(None);
+            }
+            Err(e) => {
+                if attempts >= max_attempts {
+                    return Err(anyhow::anyhow!(
+                        "HTTP request failed for package '{}' after {} attempts: {}",
+                        package_name,
+                        attempts,
+                        e
+                    ));
+                }
+                std::thread::sleep(std::time::Duration::from_millis(500));
+            }
         }
-        Err(ureq::Error::StatusCode(404)) => {
-            // Package not found on nuget.org
-            Ok(None)
-        }
-        Err(e) => Err(anyhow::anyhow!(
-            "HTTP request failed for package '{}': {}",
-            package_name,
-            e
-        )),
     }
 }
 

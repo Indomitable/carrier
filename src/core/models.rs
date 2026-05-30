@@ -75,7 +75,7 @@ pub struct DependencyNode {
     pub name: String,
     /// Resolved version.
     pub version: String,
-    /// Dependencies of this node: (dependency_id, optional_requested_version).
+    /// Dependencies of this node: (target_node_id_or_name, requested_version_text)
     pub dependencies: Vec<(String, Option<String>)>,
 }
 
@@ -95,4 +95,19 @@ pub struct Project {
     pub direct_dependencies: Vec<Dependency>,
     /// Resolved dependencies from the lock file or equivalent restore output.
     pub dependencies_graph: DependencyGraph,
+}
+
+/// The result of traversing a dependency graph to find a specific target package.
+#[derive(Debug, Clone)]
+pub struct WhyPath {
+    pub target_name: String,
+    pub target_version: String,
+    pub paths: Vec<Vec<String>>,
+}
+
+/// The why command result for a specific project.
+#[derive(Debug, Clone)]
+pub struct WhyProjectResult {
+    pub project_name: String,
+    pub targets: Vec<WhyPath>,
 }

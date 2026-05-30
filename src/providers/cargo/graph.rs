@@ -54,7 +54,14 @@ pub fn build_dependency_graph(project_path: &Path) -> Result<DependencyGraph> {
                     } else {
                         None
                     };
-                    deps.push((dep_name, dep_ver));
+                    
+                    let target_id = if let Some(ver) = &dep_ver {
+                        format!("{} {}", dep_name, ver)
+                    } else {
+                        dep_name.clone()
+                    };
+                    
+                    deps.push((target_id, dep_ver));
                 }
             }
         }
@@ -68,4 +75,52 @@ pub fn build_dependency_graph(project_path: &Path) -> Result<DependencyGraph> {
     }
 
     Ok(DependencyGraph { nodes })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs::File;
+    use std::io::Write;
+    use tempfile::tempdir;
+
+    #[test]
+    fn parses_cargo_lock_dependencies_with_correct_target_ids() {
+        let dir = tempdir().unwrap();
+        let lock_path = dir.path().join("Cargo.lock");
+        let mut file = File::create(&lock_path).unwrap();
+        
+        let toml_content = r#"
+[[package]]
+name = "my_app"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json 1.0.100",
+]
+
+[[package]]
+name = "serde"
+version = "1.0.100"
+
+[[package]]
+name = "serde_json"
+version = "1.0.100"
+dependencies = [
+ "serde 1.0.100",
+]
+"#;
+        file.write_all(toml_content.as_bytes()).unwrap();
+
+        let graph = build_dependency_graph(dir.path()).unwrap();
+        assert_eq!(graph.nodes.len(), 3);
+        
+        let my_app = graph.nodes.iter().find(|n| n.name == "my_app").unwrap();
+        // Since serde dependency doesn't specify a version, target_id should fallback to its name "serde"
+        assert_eq!(my_app.dependencies[0].0, "serde");
+        assert_eq!(my_app.dependencies[0].1, None);
+        // serde_json dependency specifies version, target_id should be "serde_json 1.0.100"
+        assert_eq!(my_app.dependencies[1].0, "serde_json 1.0.100");
+        assert_eq!(my_app.dependencies[1].1, Some("1.0.100".to_string()));
+    }
 }

@@ -13,11 +13,19 @@ use crate::core::provider::Provider;
 ///
 /// Detects .csproj files and Directory.Packages.props in the project directory.
 /// Queries the NuGet v3 flat container API for latest versions.
-pub struct NuGetProvider;
+pub struct NuGetProvider {
+    agent: ureq::Agent,
+}
 
 impl NuGetProvider {
     pub fn new() -> Self {
-        Self
+        let config = ureq::config::Config::builder()
+            .user_agent("carrier")
+            .timeout_global(Some(std::time::Duration::from_secs(10)))
+            .build();
+        Self {
+            agent: ureq::Agent::new_with_config(config),
+        }
     }
 }
 
@@ -37,10 +45,74 @@ impl Provider for NuGetProvider {
 
     fn get_latest_version(
         &self,
-        agent: &ureq::Agent,
         package_name: &str,
     ) -> Result<Option<String>> {
-        registry::get_latest_stable_version(agent, package_name)
+        registry::get_latest_stable_version(&self.agent, package_name)
+    }
+
+    fn is_outdated(&self, declared: &str, resolved: Option<&str>, latest: &str) -> bool {
+        let Some(latest_ver) = NugetVersion::parse(latest) else {
+            return false;
+        };
+
+        if let Some(res) = resolved {
+            if let Some(res_ver) = NugetVersion::parse(res) {
+                return latest_ver > res_ver;
+            }
+            return false;
+        }
+
+        let declared = declared.trim();
+        if (declared.starts_with('[') || declared.starts_with('('))
+            && declared.len() >= 2
+            && (declared.ends_with(']') || declared.ends_with(')'))
+        {
+            let inner = &declared[1..declared.len() - 1];
+            if let Some(comma_idx) = inner.find(',') {
+                let min_str = inner[..comma_idx].trim();
+                let max_str = inner[comma_idx + 1..].trim();
+
+                let min_ok = if min_str.is_empty() {
+                    true
+                } else if let Some(min_ver) = NugetVersion::parse(min_str) {
+                    if declared.starts_with('(') {
+                        latest_ver > min_ver
+                    } else {
+                        latest_ver >= min_ver
+                    }
+                } else {
+                    true
+                };
+
+                let max_ok = if max_str.is_empty() {
+                    true
+                } else if let Some(max_ver) = NugetVersion::parse(max_str) {
+                    if declared.ends_with(')') {
+                        latest_ver < max_ver
+                    } else {
+                        latest_ver <= max_ver
+                    }
+                } else {
+                    true
+                };
+
+                return !(min_ok && max_ok);
+            }
+
+            if let Some(exact_ver) = NugetVersion::parse(inner) {
+                return latest_ver != exact_ver;
+            }
+        }
+
+        if let Some(min_ver) = NugetVersion::parse(declared) {
+            if declared.split('.').count() == 1 {
+                return latest_ver.major > min_ver.major;
+            }
+
+            return latest_ver > min_ver;
+        }
+
+        false
     }
 
     fn get_projects(&self, project_path: &Path) -> Result<Vec<Project>> {
@@ -159,4 +231,63 @@ fn build_project(csproj: &Path, stop_dir: &Path) -> Result<Project> {
         direct_dependencies,
         dependencies_graph,
     })
+}
+
+#[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Debug)]
+struct NugetVersion {
+    major: u64,
+    minor: u64,
+    patch: u64,
+    revision: u64,
+}
+
+impl NugetVersion {
+    fn parse(s: &str) -> Option<Self> {
+        // Strip out pre-release suffix for base version comparison
+        let base = s.split('-').next().unwrap_or(s);
+        let parts: Vec<&str> = base.split('.').collect();
+        if parts.is_empty() || parts.len() > 4 {
+            return None;
+        }
+        let major = parts.get(0).unwrap_or(&"0").parse().ok()?;
+        let minor = parts.get(1).unwrap_or(&"0").parse().ok()?;
+        let patch = parts.get(2).unwrap_or(&"0").parse().ok()?;
+        let revision = parts.get(3).unwrap_or(&"0").parse().ok()?;
+        Some(Self {
+            major,
+            minor,
+            patch,
+            revision,
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_is_outdated() {
+        let provider = NuGetProvider::new();
+
+        // With resolved version, latest controls the result.
+        assert!(provider.is_outdated("1.0.0", Some("1.0.0"), "1.0.5"));
+        assert!(!provider.is_outdated("1.0.0", Some("1.0.5"), "1.0.5"));
+        assert!(provider.is_outdated("1.0.0", Some("1.0.0"), "1.0.0.1"));
+
+        assert!(!provider.is_outdated("[1, 2)", Some("1.5.1"), "1.5.1"));
+        assert!(provider.is_outdated("[1, 2)", Some("1.5.1"), "1.6.0"));
+
+        // Without resolved version, declared range controls the result.
+        assert!(provider.is_outdated("1.0.0", None, "2.0.0")); // outdated, nuget restores lowest bound 1.0.0
+        assert!(provider.is_outdated("[1.0.0]", None, "2.0.0")); // strictly 1.0.0
+        assert!(provider.is_outdated("[1.0.0, 2.0.0)", None, "2.0.0")); // outdated, max is 2.0.0 exclusive
+        assert!(!provider.is_outdated("[1.0.0, 2.0.0]", None, "1.5.0")); // not outdated, allow range
+        assert!(provider.is_outdated("[1.0.0, 2.0.0]", None, "2.0.1")); // outdated
+        
+        assert!(!provider.is_outdated("[1, 2)", None, "1.9.9"));
+        assert!(provider.is_outdated("[1, 2)", None, "2.0.0"));
+        assert!(!provider.is_outdated("2", None, "2.9.9"));
+        assert!(provider.is_outdated("2", None, "3.0.0"));
+    }
 }

@@ -4,8 +4,6 @@ use super::models::OutdatedDependency;
 use super::provider::Provider;
 use anyhow::{Context, Result};
 use indicatif::{ProgressBar, ProgressStyle};
-use semver::Version;
-use ureq::config::Config;
 
 /// Run the `outdated` command: detect providers, parse dependencies,
 /// query registries, and return the list of outdated dependencies.
@@ -13,10 +11,6 @@ pub fn run_outdated(
     providers: Vec<&dyn Provider>,
     project_path: &Path,
 ) -> Result<Vec<OutdatedDependency>> {
-    // Create a shared ureq agent for connection keep-alive.
-    let config = Config::builder().user_agent("carrier").build();
-    let agent = ureq::Agent::new_with_config(config);
-
     let mut all_outdated = Vec::new();
 
     for provider in providers {
@@ -32,52 +26,61 @@ pub fn run_outdated(
             continue;
         }
 
+        // Extract unique dependency names to avoid duplicate network calls
+        let unique_names: std::collections::HashSet<String> = dependencies
+            .iter()
+            .map(|d| d.name.clone())
+            .collect();
+        let unique_names: Vec<String> = unique_names.into_iter().collect();
+
         // Set up a progress spinner.
-        let pb = ProgressBar::new(dependencies.len() as u64);
+        let pb = ProgressBar::new(unique_names.len() as u64);
         pb.set_style(
-            ProgressStyle::with_template("  {spinner:.cyan} [{pos}/{len}] Checking {msg}...")?
+            ProgressStyle::with_template("  {spinner:.cyan} [{pos}/{len}] Checking registry...")?
                 .tick_chars("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"),
         );
 
-        for dep in &dependencies {
-            pb.set_message(dep.name.clone());
+        use rayon::prelude::*;
 
-            let latest = provider
-                .get_latest_version(&agent, &dep.name)
-                .with_context(|| format!("Failed to check latest version for '{}'", dep.name))?;
+        // Fetch latest versions in parallel
+        let latest_versions_result: Result<std::collections::HashMap<String, Option<String>>> =
+            unique_names
+                .into_par_iter()
+                .map(|name| {
+                    let latest = provider
+                        .get_latest_version(&name)
+                        .with_context(|| format!("Failed to check latest version for '{}'", name))?;
+                    pb.inc(1);
+                    Ok((name, latest))
+                })
+                .collect();
 
-            if let Some(latest_version) = latest {
-                // Determine the "current" version for comparison.
-                // Prefer resolved_version (from lock file), fall back to declared_version.
-                let current_str = dep
-                    .resolved_version
-                    .as_deref()
-                    .unwrap_or(&dep.declared_version);
-
-                // Try to normalize the current version string for semver parsing.
-                let current_normalized = normalize_version(current_str);
-                let latest_normalized = normalize_version(&latest_version);
-
-                if let (Some(current_v), Some(latest_v)) = (
-                    parse_version(&current_normalized),
-                    parse_version(&latest_normalized),
-                ) {
-                    if latest_v > current_v {
-                        all_outdated.push(OutdatedDependency {
-                            name: dep.name.clone(),
-                            current_version: current_str.to_string(),
-                            latest_version,
-                            ecosystem: dep.source.ecosystem,
-                            source_file: dep.source.manifest_file.clone(),
-                        });
-                    }
-                }
-            }
-
-            pb.inc(1);
-        }
+        let latest_versions = latest_versions_result?;
 
         pb.finish_and_clear();
+
+        for dep in &dependencies {
+            if let Some(Some(latest_version)) = latest_versions.get(&dep.name) {
+                if provider.is_outdated(
+                    &dep.declared_version,
+                    dep.resolved_version.as_deref(),
+                    latest_version,
+                ) {
+                    let current_str = dep
+                        .resolved_version
+                        .as_deref()
+                        .unwrap_or(&dep.declared_version);
+
+                    all_outdated.push(OutdatedDependency {
+                        name: dep.name.clone(),
+                        current_version: current_str.to_string(),
+                        latest_version: latest_version.clone(),
+                        ecosystem: dep.source.ecosystem,
+                        source_file: dep.source.manifest_file.clone(),
+                    });
+                }
+            }
+        }
     }
 
     Ok(all_outdated)
@@ -88,7 +91,9 @@ pub fn run_why(
     providers: Vec<&dyn Provider>,
     project_path: &Path,
     package_name: &str,
-) -> Result<()> {
+) -> Result<Vec<super::models::WhyProjectResult>> {
+    let mut all_results = Vec::new();
+
     for provider in &providers {
         let projects = provider.get_projects(project_path)?;
 
@@ -111,26 +116,39 @@ pub fn run_why(
             }
 
             for node in &project.dependencies_graph.nodes {
-                for (dep_name, dep_ver) in &node.dependencies {
-                    let target_ids = if let Some(ids) = name_to_ids.get(dep_name) {
+                for (target_node_id_or_name, dep_ver) in &node.dependencies {
+                    let target_ids = if id_to_node.contains_key(target_node_id_or_name) {
+                        vec![target_node_id_or_name.clone()]
+                    } else if let Some(ids) = name_to_ids.get(target_node_id_or_name) {
                         ids.clone()
                     } else {
-                        // Could be a missing dependency, or a mismatch in casing. Try case-insensitive.
-                        let mut matched = None;
-                        for k in name_to_ids.keys() {
-                            if k.eq_ignore_ascii_case(dep_name) {
-                                matched = Some(name_to_ids.get(k).unwrap().clone());
+                        // Fallback 1: case-insensitive ID match
+                        let mut matched_id = None;
+                        for k in id_to_node.keys() {
+                            if k.eq_ignore_ascii_case(target_node_id_or_name) {
+                                matched_id = Some(k.clone());
                                 break;
                             }
                         }
-                        if let Some(m) = matched {
-                            m
+                        if let Some(m) = matched_id {
+                            vec![m]
                         } else {
-                            continue;
+                            // Fallback 2: case-insensitive name match
+                            let mut matched_by_name = Vec::new();
+                            for (k, ids) in &name_to_ids {
+                                if k.eq_ignore_ascii_case(target_node_id_or_name) {
+                                    matched_by_name = ids.clone();
+                                    break;
+                                }
+                            }
+                            if !matched_by_name.is_empty() {
+                                matched_by_name
+                            } else {
+                                continue;
+                            }
                         }
                     };
 
-                    // For simplicity, add reverse edges to all matching target IDs
                     for target_id in target_ids {
                         reverse_graph
                             .entry(target_id)
@@ -152,10 +170,17 @@ pub fn run_why(
                 continue;
             }
 
-            println!("Project: {}", project.name);
+            let mut project_result = super::models::WhyProjectResult {
+                project_name: project.name.clone(),
+                targets: Vec::new(),
+            };
 
             for target in target_nodes {
-                println!("{}: {}", target.name, target.version);
+                let mut target_result = super::models::WhyPath {
+                    target_name: target.name.clone(),
+                    target_version: target.version.clone(),
+                    paths: Vec::new(),
+                };
 
                 let mut paths = Vec::new();
 
@@ -243,88 +268,15 @@ pub fn run_why(
 
                 // Sort paths for stable output
                 paths.sort();
-
-                for path in paths {
-                    println!("{}", path.join(" -> "));
-                }
-                println!();
+                target_result.paths = paths;
+                project_result.targets.push(target_result);
             }
+
+            all_results.push(project_result);
         }
     }
 
-    Ok(())
+    Ok(all_results)
 }
 
-/// Attempt to parse a version string as a semver::Version.
-fn parse_version(version: &str) -> Option<Version> {
-    Version::parse(version).ok()
-}
 
-/// Normalize a version string for semver comparison.
-/// Handles wildcards ("3.*" → "3.0.0"), two-part versions ("3.1" → "3.1.0"),
-/// and strips common prefixes/ranges.
-fn normalize_version(version: &str) -> String {
-    let v = version.trim();
-
-    // Strip leading range characters: [, (, >=, =, ~, ^
-    let v = v.trim_start_matches(|c: char| "[(>=~^".contains(c));
-    // Strip trailing range characters: ], ), and anything after comma
-    let v = if let Some(idx) = v.find(|c: char| ",])".contains(c)) {
-        &v[..idx]
-    } else {
-        v
-    };
-    let v = v.trim();
-
-    // Replace wildcards: "3.*" → "3.0.0", "3.1.*" → "3.1.0"
-    let v = v.replace(".*", "");
-
-    // Ensure at least 3 parts (major.minor.patch)
-    let parts: Vec<&str> = v.split('.').collect();
-    match parts.len() {
-        1 => format!("{}.0.0", parts[0]),
-        2 => format!("{}.{}.0", parts[0], parts[1]),
-        _ => v.to_string(),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_normalize_version_full() {
-        assert_eq!(normalize_version("13.0.3"), "13.0.3");
-    }
-
-    #[test]
-    fn test_normalize_version_two_parts() {
-        assert_eq!(normalize_version("3.1"), "3.1.0");
-    }
-
-    #[test]
-    fn test_normalize_version_one_part() {
-        assert_eq!(normalize_version("3"), "3.0.0");
-    }
-
-    #[test]
-    fn test_normalize_version_wildcard() {
-        assert_eq!(normalize_version("3.*"), "3.0.0");
-        assert_eq!(normalize_version("3.1.*"), "3.1.0");
-    }
-
-    #[test]
-    fn test_normalize_version_range() {
-        assert_eq!(normalize_version("[13.0, 14.0)"), "13.0.0");
-    }
-
-    #[test]
-    fn test_normalize_version_caret() {
-        assert_eq!(normalize_version("^4.18.2"), "4.18.2");
-    }
-
-    #[test]
-    fn test_normalize_version_tilde() {
-        assert_eq!(normalize_version("~1.24.0"), "1.24.0");
-    }
-}
